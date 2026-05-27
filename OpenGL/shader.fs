@@ -1,82 +1,150 @@
 #version 330 core
 out vec4 FragColor;
 
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 TexCoords;
+in vec3 SkyboxTexCoords;
+in vec4 FragPosLightSpace;
+
 in VS_OUT {
-    vec3 FragPos;
-    vec2 TexCoords;
-    vec4 FragPosLightSpace;
-    mat3 TBN;
+    vec3 TangentLightPos;
+    vec3 TangentLight2Pos;
+    vec3 TangentViewPos;
+    vec3 TangentFragPos;
 } fs_in;
 
-// 텍스처 및 맵
-uniform sampler2D texture_diffuse1;
-uniform sampler2D texture_normal1;    // 노말 맵
-uniform sampler2D shadowMap;          // 섀도우 맵
-uniform samplerCube skybox;           // 큐브 맵 (환경 매핑용)
+struct Material {
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+    float shininess;
+};
 
-uniform vec3 lightPos;
+struct Light {
+    vec3 position;
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+};
+
+uniform sampler2D diffuseTexture;
+uniform sampler2D shadowMap;
+uniform sampler2D normalMap;
+uniform samplerCube skybox;
+
+uniform Material material;
+uniform Light light;
+uniform Light light2;
 uniform vec3 viewPos;
-uniform bool useNormalMap;
-uniform bool useReflection;           // 큐브 매핑 반사 적용 여부
 
-// [섀도우 매핑] 그림자 판정 함수
-float ShadowCalculation(vec4 fragPosLightSpace)
+uniform bool isFloor;
+uniform bool isTeapot;
+uniform bool isNormalMapped;
+uniform bool useReflection;
+uniform bool isCartoon;
+uniform bool useMultipleLights;
+uniform bool isStar;
+
+uniform bool isDepthPass;
+uniform bool isSkybox;
+
+float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 {
-    // 투영 좌표계로 변환 (-1 ~ 1 범위)
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    // 0 ~ 1 범위로 변환
     projCoords = projCoords * 0.5 + 0.5;
-    
-    // 섀도우 맵 영역 밖은 그림자 제외
     if(projCoords.z > 1.0) return 0.0;
     
     float closestDepth = texture(shadowMap, projCoords.xy).r; 
     float currentDepth = projCoords.z;
     
-    // 섀도우 아크네 방지를 위한 바이어스 적용
-    float bias = 0.005;
+    float bias = max(0.05 * (1.0 - dot(normal, lightDir)), 0.005);
     float shadow = currentDepth - bias > closestDepth  ? 1.0 : 0.0;
     
     return shadow;
 }
 
+vec3 CalculateLightContribution(Light l, vec3 normal, vec3 lightDir, vec3 viewDir, vec3 color, float shadow, bool cartoon)
+{
+    vec3 ambient = l.ambient * material.diffuse;
+    if (!isTeapot && !isNormalMapped) {
+        ambient = 0.2 * color;
+    }
+    
+    float diff = max(dot(normal, lightDir), 0.0);
+    if (cartoon) {
+        if (diff > 0.8) diff = 0.9;
+        else if (diff > 0.6) diff = 0.7;
+        else if (diff > 0.4) diff = 0.5;
+        else if (diff > 0.2) diff = 0.3;
+        else diff = 0.1;
+    }
+    
+    vec3 diffuse = l.diffuse * (diff * material.diffuse);
+    if (!isTeapot && !isNormalMapped) {
+        diffuse = diff * color;
+    }
+    
+    vec3 reflectDir = reflect(-lightDir, normal);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+    vec3 specular = l.specular * (spec * material.specular);
+    if (!isTeapot && !isNormalMapped) {
+        specular = vec3(0.4) * spec;
+    }
+    
+    return ambient + (1.0 - shadow) * (diffuse + specular);
+}
+
 void main()
 {           
-    // 1. [노말 매핑] 법선 벡터 추출 및 변환
-    vec3 normal = fs_in.TBN[2]; // 기본 Normal
-    if(useNormalMap) {
-        normal = texture(texture_normal1, fs_in.TexCoords).rgb;
-        normal = normal * 2.0 - 1.0;   // 0~1 단위를 -1~1로 변환
-        normal = normalize(fs_in.TBN * normal); // 탄젠트 공간 -> 월드 공간
+    if (isDepthPass) {
+        return;
+    }
+
+    if (isSkybox) {
+        FragColor = texture(skybox, SkyboxTexCoords);
+        return;
+    }
+
+    vec3 color = texture(diffuseTexture, TexCoords).rgb;
+    
+    if (isStar) {
+        FragColor = vec4(color, 1.0);
+        return;
+    }
+
+    vec3 normal = normalize(Normal);
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 mainLightDir = normalize(light.position - FragPos);
+    vec3 subLightDir = normalize(light2.position - FragPos);
+
+    if (isNormalMapped) {
+        normal = texture(normalMap, TexCoords).rgb;
+        normal = normalize(normal * 2.0 - 1.0);
+        viewDir = normalize(fs_in.TangentViewPos - fs_in.TangentFragPos);
+        mainLightDir = normalize(fs_in.TangentLightPos - fs_in.TangentFragPos);
+        subLightDir = normalize(fs_in.TangentLight2Pos - fs_in.TangentFragPos);
+        color = texture(diffuseTexture, TexCoords).rgb;
     }
     
-    // 기본 색상 추출
-    vec3 color = texture(texture_diffuse1, fs_in.TexCoords).rgb;
+    float shadow = ShadowCalculation(FragPosLightSpace, normal, mainLightDir);       
     
-    // Ambient (환경광)
-    vec3 ambient = 0.15 * color;
+    vec3 finalLighting = CalculateLightContribution(light, normal, mainLightDir, viewDir, color, shadow, isCartoon);
     
-    // Diffuse (난반사광)
-    vec3 lightDir = normalize(lightPos - fs_in.FragPos);
-    float diff = max(dot(lightDir, normal), 0.0);
-    vec3 diffuse = diff * color;
+    if (useMultipleLights) {
+        finalLighting += CalculateLightContribution(light2, normal, subLightDir, viewDir, color, 0.0, isCartoon);
+    }
     
-    // Specular (경면광)
-    vec3 viewDir = normalize(viewPos - fs_in.FragPos);
-    vec3 halfwayDir = normalize(lightDir + viewDir);  
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
-    vec3 specular = vec3(0.3) * spec;
-    
-    // 2. [섀도우 매핑] 그림자 계산
-    float shadow = ShadowCalculation(fs_in.FragPosLightSpace);       
-    vec3 lighting = ambient + (1.0 - shadow) * (diffuse + specular);    
-    
-    // 3. [큐브 매핑] 스카이박스 환경 반사 계산
-    if(useReflection) {
-        vec3 R = reflect(-viewDir, normal);
+    if (useReflection || isFloor) {
+        vec3 I = normalize(FragPos - viewPos);
+        vec3 R = reflect(I, normalize(Normal));
         vec3 reflectionColor = texture(skybox, R).rgb;
-        lighting = mix(lighting, reflectionColor, 0.2); // 기존 빛 연산과 반사광 합성
+        if (isFloor) {
+            finalLighting = mix(finalLighting, reflectionColor, 0.15);
+        } else {
+            finalLighting = mix(finalLighting, reflectionColor, 0.5);
+        }
     }
-    
-    FragColor = vec4(lighting, 1.0);
+
+    FragColor = vec4(finalLighting, 1.0);
 }
