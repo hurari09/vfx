@@ -42,9 +42,10 @@ uniform bool isFloor;
 uniform bool isTeapot;
 uniform bool isNormalMapped;
 uniform bool useReflection;
-uniform bool isCartoon;
 uniform bool useMultipleLights;
 uniform bool isStar;
+uniform bool isSolidColor;
+uniform vec3 solidColor;
 
 uniform bool isDepthPass;
 uniform bool isSkybox;
@@ -64,7 +65,7 @@ float ShadowCalculation(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
     return shadow;
 }
 
-vec3 CalculateLightContribution(Light l, vec3 normal, vec3 lightDir, vec3 viewDir, vec3 color, float shadow, bool cartoon)
+vec3 CalculateLightContribution(Light l, vec3 normal, vec3 lightDir, vec3 viewDir, vec3 color, float shadow)
 {
     vec3 ambient = l.ambient * material.diffuse;
     if (!isTeapot && !isNormalMapped) {
@@ -72,13 +73,6 @@ vec3 CalculateLightContribution(Light l, vec3 normal, vec3 lightDir, vec3 viewDi
     }
     
     float diff = max(dot(normal, lightDir), 0.0);
-    if (cartoon) {
-        if (diff > 0.8) diff = 0.9;
-        else if (diff > 0.6) diff = 0.7;
-        else if (diff > 0.4) diff = 0.5;
-        else if (diff > 0.2) diff = 0.3;
-        else diff = 0.1;
-    }
     
     vec3 diffuse = l.diffuse * (diff * material.diffuse);
     if (!isTeapot && !isNormalMapped) {
@@ -106,7 +100,12 @@ void main()
         return;
     }
 
-    vec3 color = texture(diffuseTexture, TexCoords).rgb;
+    vec3 color;
+    if (isSolidColor) {
+        color = solidColor;
+    } else {
+        color = texture(diffuseTexture, TexCoords).rgb;
+    }
     
     if (isStar) {
         FragColor = vec4(color, 1.0);
@@ -129,10 +128,10 @@ void main()
     
     float shadow = ShadowCalculation(FragPosLightSpace, normal, mainLightDir);       
     
-    vec3 finalLighting = CalculateLightContribution(light, normal, mainLightDir, viewDir, color, shadow, isCartoon);
+    vec3 finalLighting = CalculateLightContribution(light, normal, mainLightDir, viewDir, color, shadow);
     
     if (useMultipleLights) {
-        finalLighting += CalculateLightContribution(light2, normal, subLightDir, viewDir, color, 0.0, isCartoon);
+        finalLighting += CalculateLightContribution(light2, normal, subLightDir, viewDir, color, 0.0);
     }
     
     if (useReflection || isFloor) {
