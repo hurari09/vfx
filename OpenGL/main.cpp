@@ -711,7 +711,7 @@ void renderScene(const Shader& shader, unsigned int sphereVAO, int nSphereVert, 
     glDrawArrays(GL_TRIANGLES, 0, 36);
 
     shader.setBool("isSolidColor", true);
-    shader.setVec3("solidColor", glm::vec3(0.6f, 0.2f, 0.8f));
+    shader.setVec3("solidColor", glm::vec3(0.0f, 1.0f, 0.0f));
     shader.setBool("useReflection", true);
     glm::mat4 ballModelObj = glm::mat4(1.0f);
     ballModelObj = glm::translate(ballModelObj, ballPosition);
